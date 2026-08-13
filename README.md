@@ -368,3 +368,97 @@ Depois de chamar uma rota pelo Gateway, selecione o serviço `gateway` no Jaeger
 - Não há alertas, retenção de longo prazo, autenticação robusta ou alta disponibilidade no stack de observabilidade.
 - Os NodePorts são destinados somente a demonstração local. Produção utilizaria Ingress, TLS e controle de acesso.
 - A estratégia adotada é Rolling Update para todos os serviços stateless; Canary e Blue/Green permanecem fora do escopo deste MVP.
+
+## Infraestrutura como Código - Terraform
+
+O diretório `terraform/` contém uma referência de Infraestrutura como Código para hospedar a Loja Veloz na AWS. A AWS foi escolhida por oferecer o Amazon EKS, serviço Kubernetes gerenciado compatível com os manifests existentes, além de uma arquitetura de rede amplamente utilizada em projetos Cloud DevOps.
+
+Esta configuração é um esqueleto acadêmico funcional e não provisiona nada automaticamente. Nenhuma credencial AWS está no repositório e `terraform apply` não deve ser executado sem uma conta autorizada, revisão de custos e configuração de segurança adequada.
+
+### Arquitetura proposta
+
+```text
+AWS Region
+└── VPC
+    ├── Zona de disponibilidade A
+    │   ├── Subnet pública ── Internet Gateway / NAT Gateway
+    │   └── Subnet privada ── EKS managed node
+    ├── Zona de disponibilidade B
+    │   ├── Subnet pública
+    │   └── Subnet privada ── EKS managed node
+    └── Amazon EKS
+        ├── Control plane gerenciado pela AWS
+        └── Managed Node Group nas subnets privadas
+```
+
+Os recursos representados são:
+
+- VPC com DNS habilitado;
+- duas subnets públicas e duas privadas em zonas distintas;
+- Internet Gateway e tabelas de rotas;
+- um NAT Gateway compartilhado para saída dos nodes privados;
+- security group adicional do control plane;
+- roles IAM separadas para cluster e nodes, com políticas gerenciadas necessárias;
+- cluster EKS com endpoint privado habilitado;
+- endpoint público configurável por CIDRs administrativos;
+- node group gerenciado exclusivamente nas subnets privadas;
+- tags padronizadas de projeto, ambiente e gerenciamento.
+
+Um único NAT Gateway reduz custo para a demonstração, mas representa um ponto único de falha. Uma arquitetura de produção com maior disponibilidade normalmente utilizaria um NAT Gateway por zona ou VPC Endpoints para os serviços AWS necessários.
+
+### Arquivos e variáveis
+
+```text
+terraform/
+├── versions.tf
+├── providers.tf
+├── variables.tf
+├── main.tf
+├── outputs.tf
+└── terraform.tfvars.example
+```
+
+As variáveis abrangem região, projeto, ambiente, CIDR da VPC, CIDRs das subnets, versão Kubernetes, tipos de instância, escala mínima/desejada/máxima e CIDRs autorizados no endpoint público do EKS. Antes de qualquer planejamento, copie o exemplo:
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars
+```
+
+No PowerShell:
+
+```powershell
+Set-Location terraform
+Copy-Item terraform.tfvars.example terraform.tfvars
+```
+
+O arquivo `terraform.tfvars` é ignorado pelo Git. Revise especialmente `kubernetes_version`, porque as versões suportadas pelo EKS mudam ao longo do tempo, e substitua o endereço reservado de documentação em `cluster_public_access_cidrs` pelo IP ou pela rede administrativa real antes de um eventual provisionamento.
+
+### Inicializar e validar
+
+Com Terraform instalado e credenciais AWS fornecidas por um mecanismo externo, como AWS CLI, AWS IAM Identity Center ou variáveis de ambiente temporárias:
+
+```bash
+terraform init -backend=false
+terraform fmt -check
+terraform validate
+terraform plan -out=loja-veloz.tfplan
+```
+
+O plano salvo possui dados de infraestrutura e é ignorado pelo Git. Para este trabalho acadêmico, pare após revisar o plano. Não execute `terraform apply` sem uma conta AWS apropriada, autorização explícita e avaliação dos custos de EKS, EC2 e NAT Gateway.
+
+Os outputs apresentam nome e endpoint do cluster, região, VPC, subnets, node group e o comando de referência para configurar o `kubectl` após um provisionamento autorizado.
+
+### State e credenciais
+
+O backend permanece local intencionalmente porque nenhuma infraestrutura externa ou credencial foi fornecida. Arquivos `.terraform/`, state, planos e `terraform.tfvars` estão protegidos pelo `.gitignore`.
+
+Em produção, o state deveria usar um backend remoto criptografado e com versionamento, como Amazon S3. O locking deve ser configurado conforme a versão e o padrão adotado pela equipe, além de IAM com menor privilégio, auditoria e separação por ambiente. Nunca versione `terraform.tfstate`, pois ele pode conter dados sensíveis.
+
+O provider AWS recebe somente a região. A autenticação é resolvida pela cadeia padrão do SDK da AWS; não existem access key, secret key ou token nos arquivos Terraform.
+
+### Relação com Kubernetes
+
+Terraform representa a infraestrutura base: rede, permissões, cluster EKS e capacidade de computação. Os manifests em `kubernetes/` continuam responsáveis por namespace, aplicações, PostgreSQL e observabilidade. Esta separação evita que Terraform gerencie Secrets Kubernetes e mantém a implantação da aplicação independente da criação do cluster.
+
+Depois de um provisionamento futuro e autorizado, seria necessário configurar o acesso ao cluster, instalar complementos operacionais apropriados — como Metrics Server, driver CSI de EBS e, se desejado, AWS Load Balancer Controller — e então aplicar o Kustomization. Esses complementos não foram adicionados neste esqueleto para evitar recursos e permissões além do escopo acadêmico.

@@ -4,3 +4,20 @@ node_modules/
 !.env.example
 npm-debug.log*
 coverage/
+
+# Terraform: state e artefatos locais nunca devem ser versionados
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.tfstate.lock.info
+
+# Valores locais podem conter dados específicos da conta
+terraform/*.tfvars
+!terraform/*.tfvars.example

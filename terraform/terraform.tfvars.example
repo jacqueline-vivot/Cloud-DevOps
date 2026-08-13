@@ -1,0 +1,23 @@
+aws_region   = "us-east-1"
+project_name = "loja-veloz"
+environment  = "dev"
+
+vpc_cidr = "10.20.0.0/16"
+public_subnet_cidrs = [
+  "10.20.0.0/24",
+  "10.20.1.0/24"
+]
+private_subnet_cidrs = [
+  "10.20.10.0/24",
+  "10.20.11.0/24"
+]
+
+kubernetes_version = "1.33"
+node_instance_types = ["t3.medium"]
+node_min_size       = 2
+node_desired_size   = 2
+node_max_size       = 4
+
+# CIDR TEST-NET apenas ilustrativo e não acessível na Internet pública.
+# Substitua pelo IP administrativo real antes de um eventual apply autorizado.
+cluster_public_access_cidrs = ["203.0.113.10/32"]
