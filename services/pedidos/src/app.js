@@ -1,22 +1,53 @@
 import Fastify from 'fastify';
+import { DatabaseUnavailableError, queryDatabase } from './database.js';
 
-export function buildApp() {
+function mapPedido(row) {
+  return {
+    id: String(row.id),
+    produtoId: row.produto_id,
+    quantidade: row.quantidade,
+    cliente: row.cliente,
+    status: row.status,
+    criadoEm: row.criado_em.toISOString()
+  };
+}
+
+export function buildApp(pool) {
   const app = Fastify({ logger: true });
-  const pedidos = new Map();
-  let proximoId = 1;
 
-  app.get('/health', async () => ({ status: 'ok', servico: 'pedidos' }));
+  app.get('/health', async (_request, reply) => {
+    await queryDatabase(pool, 'SELECT 1');
+    return reply.send({ status: 'ok', servico: 'pedidos' });
+  });
 
-  app.get('/pedidos', async () => Array.from(pedidos.values()));
+  async function listarPedidos() {
+    const result = await queryDatabase(pool, `
+      SELECT id, produto_id, quantidade, cliente, status, criado_em
+      FROM pedidos
+      ORDER BY id
+    `);
+    return result.rows.map(mapPedido);
+  }
+
+  app.get('/pedidos', listarPedidos);
+  app.get('/pedidos/', listarPedidos);
 
   app.get('/pedidos/:id', async (request, reply) => {
-    const pedido = pedidos.get(request.params.id);
-
-    if (!pedido) {
+    if (!/^\d+$/.test(request.params.id)) {
       return reply.code(404).send({ erro: 'Pedido não encontrado' });
     }
 
-    return pedido;
+    const result = await queryDatabase(pool, `
+      SELECT id, produto_id, quantidade, cliente, status, criado_em
+      FROM pedidos
+      WHERE id = $1
+    `, [request.params.id]);
+
+    if (result.rowCount === 0) {
+      return reply.code(404).send({ erro: 'Pedido não encontrado' });
+    }
+
+    return mapPedido(result.rows[0]);
   });
 
   app.post('/pedidos', async (request, reply) => {
@@ -28,18 +59,13 @@ export function buildApp() {
       });
     }
 
-    const id = String(proximoId++);
-    const pedido = {
-      id,
-      produtoId,
-      quantidade,
-      cliente: cliente ?? null,
-      status: 'criado',
-      criadoEm: new Date().toISOString()
-    };
+    const result = await queryDatabase(pool, `
+      INSERT INTO pedidos (produto_id, quantidade, cliente)
+      VALUES ($1, $2, $3)
+      RETURNING id, produto_id, quantidade, cliente, status, criado_em
+    `, [produtoId, quantidade, cliente ?? null]);
 
-    pedidos.set(id, pedido);
-    return reply.code(201).send(pedido);
+    return reply.code(201).send(mapPedido(result.rows[0]));
   });
 
   app.setNotFoundHandler((_request, reply) => {
@@ -48,6 +74,11 @@ export function buildApp() {
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error(error);
+
+    if (error instanceof DatabaseUnavailableError) {
+      return reply.code(503).send({ erro: 'Banco de dados temporariamente indisponível' });
+    }
+
     reply.code(error.statusCode ?? 500).send({ erro: 'Erro ao processar a requisição' });
   });
 

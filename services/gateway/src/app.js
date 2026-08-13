@@ -34,6 +34,7 @@ export function buildApp(config = {}) {
   app.get('/health', async () => ({ status: 'ok', servico: 'gateway' }));
 
   app.get('/pedidos', (request, reply) => encaminhar(request, reply, urls.pedidos, '/pedidos'));
+  app.get('/pedidos/', (request, reply) => encaminhar(request, reply, urls.pedidos, '/pedidos/'));
   app.get('/pedidos/:id', (request, reply) =>
     encaminhar(request, reply, urls.pedidos, `/pedidos/${encodeURIComponent(request.params.id)}`));
   app.post('/pedidos', (request, reply) => encaminhar(request, reply, urls.pedidos, '/pedidos'));
