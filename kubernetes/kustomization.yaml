@@ -19,3 +19,4 @@ resources:
   - 51-gateway-deployment.yaml
   - 52-gateway-service.yaml
   - 53-gateway-hpa.yaml
+  - observability

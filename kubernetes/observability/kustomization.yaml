@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-prometheus-configmap.yaml
+  - 01-prometheus-deployment.yaml
+  - 02-prometheus-service.yaml
+  - 10-grafana-datasource.yaml
+  - 11-grafana-deployment.yaml
+  - 12-grafana-service.yaml
+  - 20-jaeger-deployment.yaml
+  - 21-jaeger-service.yaml
+  - 22-jaeger-ui-service.yaml
+  - 30-otel-collector-configmap.yaml
+  - 31-otel-collector-deployment.yaml
+  - 32-otel-collector-service.yaml
+

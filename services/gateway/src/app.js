@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { loggerOptions, registerMetrics } from './observability.js';
 
 async function encaminhar(request, reply, baseUrl, caminho) {
   const url = new URL(caminho, baseUrl);
@@ -18,13 +19,14 @@ async function encaminhar(request, reply, baseUrl, caminho) {
     const conteudo = texto ? JSON.parse(texto) : null;
     return reply.code(resposta.status).send(conteudo);
   } catch (error) {
-    request.log.error(error);
+    request.log.error({ err: error, method: request.method, path: caminho }, 'Falha ao acessar microsserviço');
     return reply.code(502).send({ erro: 'Serviço temporariamente indisponível' });
   }
 }
 
 export function buildApp(config = {}) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: loggerOptions });
+  registerMetrics(app, 'gateway');
   const urls = {
     pedidos: config.pedidosUrl ?? process.env.PEDIDOS_URL ?? 'http://127.0.0.1:3001',
     pagamentos: config.pagamentosUrl ?? process.env.PAGAMENTOS_URL ?? 'http://127.0.0.1:3002',
@@ -52,7 +54,7 @@ export function buildApp(config = {}) {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error({ err: error }, 'Falha ao processar requisição');
     reply.code(error.statusCode ?? 500).send({ erro: 'Erro ao processar a requisição' });
   });
 

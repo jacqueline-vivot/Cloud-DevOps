@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './telemetry.js';
 import { buildApp } from './app.js';
 import { createDatabasePool, initializeDatabase } from './database.js';
 

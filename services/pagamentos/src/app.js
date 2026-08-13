@@ -1,7 +1,9 @@
 import Fastify from 'fastify';
+import { loggerOptions, registerMetrics } from './observability.js';
 
 export function buildApp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: loggerOptions });
+  registerMetrics(app, 'pagamentos');
   let proximoId = 1;
 
   app.get('/health', async () => ({ status: 'ok', servico: 'pagamentos' }));
@@ -27,7 +29,7 @@ export function buildApp() {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error({ err: error }, 'Falha ao processar requisição');
     reply.code(error.statusCode ?? 500).send({ erro: 'Erro ao processar a requisição' });
   });
 

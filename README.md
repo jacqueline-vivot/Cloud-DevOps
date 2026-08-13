@@ -243,3 +243,128 @@ Normalmente, `GITHUB_TOKEN` e as permissões declaradas no próprio workflow sã
 - permitir as ações externas utilizadas pelo workflow, caso exista uma allowlist organizacional.
 
 Somente o job de publicação, restrito a eventos `push`, recebe `contents: read` e `packages: write`. Todos os jobs executados em pull requests recebem somente `contents: read`. Não existe deploy automático nesta etapa.
+
+## Observabilidade e Deploy
+
+Esta etapa adiciona observabilidade voltada ao Kubernetes sem alterar o fluxo do Docker Compose. Os manifests ficam em `kubernetes/observability/` e são incluídos automaticamente pelo `kubernetes/kustomization.yaml` principal.
+
+### Estratégia Rolling Update
+
+Gateway, Pedidos, Pagamentos e Estoque utilizam explicitamente a estratégia `RollingUpdate` com `maxUnavailable: 0` e `maxSurge: 1`. Durante uma atualização, o Kubernetes cria no máximo um pod adicional e só encerra um pod antigo quando o substituto estiver pronto. Essa estratégia foi escolhida porque mantém a aplicação disponível, permite atualização gradual e oferece rollback nativo sem a complexidade operacional de Blue/Green ou Canary para este MVP.
+
+As `readinessProbe` impedem que um pod novo receba tráfego antes de responder corretamente em `/health`. O PostgreSQL continua como StatefulSet e não recebeu essa configuração de Deployment, pois uma atualização de banco exige cuidados próprios com estado, compatibilidade e backup.
+
+Para atualizar uma imagem e acompanhar o rollout:
+
+```bash
+kubectl set image deployment/gateway gateway=ghcr.io/<proprietario>/loja-veloz-gateway:<tag> -n loja-veloz
+kubectl rollout status deployment/gateway -n loja-veloz
+kubectl get pods -n loja-veloz --watch
+```
+
+Para consultar histórico e estado:
+
+```bash
+kubectl rollout history deployment/gateway -n loja-veloz
+kubectl describe deployment gateway -n loja-veloz
+```
+
+Para desfazer a última atualização ou retornar a uma revisão específica:
+
+```bash
+kubectl rollout undo deployment/gateway -n loja-veloz
+kubectl rollout undo deployment/gateway --to-revision=2 -n loja-veloz
+```
+
+Os mesmos comandos se aplicam a `pedidos`, `pagamentos` e `estoque`.
+
+### Logs estruturados
+
+Os quatro serviços usam o logger JSON do Fastify/Pino e escrevem exclusivamente em stdout/stderr. Não há arquivos locais de log. Requisições, respostas, tempos e erros são registrados com campos estruturados; cabeçalhos de autenticação, cookies e campos de senha são redigidos. O nível pode ser controlado por `LOG_LEVEL`, configurado como `info` nos Deployments.
+
+Para consultar logs:
+
+```bash
+kubectl logs -n loja-veloz deployment/gateway --tail=100 -f
+kubectl logs -n loja-veloz deployment/pedidos --tail=100 -f
+```
+
+Em produção, esses logs seriam coletados por uma solução externa, como Loki, Elasticsearch ou o serviço de logs do provedor de nuvem. Essa agregação não faz parte do MVP atual.
+
+### Métricas e Prometheus
+
+Cada microsserviço expõe `/metrics` no mesmo servidor HTTP. As métricas incluem:
+
+- métricas padrão do processo Node.js, com prefixo `loja_veloz_nodejs_`;
+- `loja_veloz_http_requests_total`, separada por serviço, método, rota e status;
+- `loja_veloz_http_request_duration_seconds`, histograma de latência com os mesmos rótulos.
+
+O Prometheus consulta os quatro Services a cada 15 segundos e mantém dados por 24 horas em armazenamento efêmero. Para acessar localmente:
+
+```bash
+minikube service prometheus -n loja-veloz --url
+```
+
+Ou com port-forward:
+
+```bash
+kubectl port-forward -n loja-veloz service/prometheus 9090:9090
+```
+
+Consultas PromQL úteis:
+
+```promql
+sum by (service) (rate(loja_veloz_http_requests_total[5m]))
+histogram_quantile(0.95, sum by (le, service) (rate(loja_veloz_http_request_duration_seconds_bucket[5m])))
+sum by (service) (rate(loja_veloz_http_requests_total{status_code=~"5.."}[5m]))
+loja_veloz_nodejs_process_resident_memory_bytes
+```
+
+### Grafana
+
+O Grafana recebe o Prometheus como datasource padrão por provisioning. Para a demonstração acadêmica, o acesso anônimo somente leitura está habilitado e não existe credencial armazenada no Git.
+
+```bash
+minikube service grafana -n loja-veloz --url
+```
+
+Ou:
+
+```bash
+kubectl port-forward -n loja-veloz service/grafana 3001:3000
+```
+
+Não foi versionado um dashboard complexo. Os quatro painéis recomendados usam as consultas acima para taxa de requisições, latência p95, erros HTTP 5xx e memória do processo. Em produção, dashboards, autenticação e persistência do Grafana seriam gerenciados separadamente.
+
+### Tracing distribuído
+
+Os serviços utilizam OpenTelemetry com instrumentações direcionadas para HTTP, Fastify e Undici/`fetch`. O Gateway propaga automaticamente o contexto W3C para Pedidos, Pagamentos e Estoque. Os spans são enviados por OTLP/HTTP ao OpenTelemetry Collector, que agrupa e encaminha os traces por OTLP/gRPC ao Jaeger.
+
+```text
+Gateway e microsserviços -> OTLP/HTTP -> OpenTelemetry Collector -> OTLP/gRPC -> Jaeger
+```
+
+O tracing é ativado somente quando `OTEL_EXPORTER_OTLP_ENDPOINT` está configurado. Nos Deployments, ele aponta para `http://otel-collector:4318`; no Docker Compose e na execução local sem essa variável, os serviços continuam funcionando sem exportar traces.
+
+Para abrir o Jaeger:
+
+```bash
+minikube service jaeger-ui -n loja-veloz --url
+```
+
+Ou:
+
+```bash
+kubectl port-forward -n loja-veloz service/jaeger-ui 16686:16686
+```
+
+Depois de chamar uma rota pelo Gateway, selecione o serviço `gateway` no Jaeger para visualizar a sequência distribuída.
+
+### Limitações acadêmicas
+
+- Prometheus, Grafana e Jaeger usam `emptyDir`; os dados são perdidos quando os pods são recriados.
+- O Prometheus consulta os Services diretamente. Com várias réplicas, o balanceamento pode não coletar todas em cada ciclo; produção usaria descoberta de pods ou Prometheus Operator.
+- O tracing cobre HTTP, Fastify e `fetch`, mas não cria spans detalhados para consultas PostgreSQL.
+- Não há alertas, retenção de longo prazo, autenticação robusta ou alta disponibilidade no stack de observabilidade.
+- Os NodePorts são destinados somente a demonstração local. Produção utilizaria Ingress, TLS e controle de acesso.
+- A estratégia adotada é Rolling Update para todos os serviços stateless; Canary e Blue/Green permanecem fora do escopo deste MVP.

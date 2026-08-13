@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { DatabaseUnavailableError, queryDatabase } from './database.js';
+import { loggerOptions, registerMetrics } from './observability.js';
 
 function mapPedido(row) {
   return {
@@ -13,7 +14,8 @@ function mapPedido(row) {
 }
 
 export function buildApp(pool) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: loggerOptions });
+  registerMetrics(app, 'pedidos');
 
   app.get('/health', async (_request, reply) => {
     await queryDatabase(pool, 'SELECT 1');
@@ -73,7 +75,7 @@ export function buildApp(pool) {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error({ err: error }, 'Falha ao processar requisição');
 
     if (error instanceof DatabaseUnavailableError) {
       return reply.code(503).send({ erro: 'Banco de dados temporariamente indisponível' });

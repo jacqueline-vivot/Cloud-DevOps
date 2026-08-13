@@ -1,7 +1,9 @@
 import Fastify from 'fastify';
+import { loggerOptions, registerMetrics } from './observability.js';
 
 export function buildApp() {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: loggerOptions });
+  registerMetrics(app, 'estoque');
   const estoque = new Map([
     ['produto-1', 10],
     ['produto-2', 5]
@@ -46,7 +48,7 @@ export function buildApp() {
   });
 
   app.setErrorHandler((error, request, reply) => {
-    request.log.error(error);
+    request.log.error({ err: error }, 'Falha ao processar requisição');
     reply.code(error.statusCode ?? 500).send({ erro: 'Erro ao processar a requisição' });
   });
 
