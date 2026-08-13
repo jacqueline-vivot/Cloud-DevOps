@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespace.yaml
+  - 10-postgres-configmap.yaml
+  - 11-postgres-secret.yaml
+  - 12-postgres-pvc.yaml
+  - 13-postgres-statefulset.yaml
+  - 14-postgres-service.yaml
+  - 20-pedidos-configmap.yaml
+  - 21-pedidos-deployment.yaml
+  - 22-pedidos-service.yaml
+  - 23-pedidos-hpa.yaml
+  - 30-pagamentos-deployment.yaml
+  - 31-pagamentos-service.yaml
+  - 40-estoque-deployment.yaml
+  - 41-estoque-service.yaml
+  - 50-gateway-configmap.yaml
+  - 51-gateway-deployment.yaml
+  - 52-gateway-service.yaml
+  - 53-gateway-hpa.yaml

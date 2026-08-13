@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pedidos
+  namespace: loja-veloz
+  labels:
+    app.kubernetes.io/name: pedidos
+    app.kubernetes.io/part-of: loja-veloz
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pedidos
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+      protocol: TCP
+

@@ -92,3 +92,100 @@ npm run dev
 Repita o processo em terminais separados para `pagamentos`, `estoque` e `gateway`. Para execução sem modo de observação, use `npm start`.
 
 Cada serviço carrega configurações de um arquivo `.env` local. Use o `.env.example` da respectiva pasta como modelo. Para execução fora do Docker, configure no serviço de Pedidos as variáveis `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER` e `DATABASE_PASSWORD` de acordo com seu PostgreSQL local.
+
+## Executar com Kubernetes
+
+Os manifests da aplicação estão em `kubernetes/`, numerados por componente e ordem lógica:
+
+- namespace `loja-veloz`, com Pod Security Admission no perfil `restricted`;
+- ConfigMap, Secret, PVC, StatefulSet e Service do PostgreSQL;
+- ConfigMap, Deployment, Service e HPA de Pedidos;
+- Deployment e Service de Pagamentos;
+- Deployment e Service de Estoque;
+- ConfigMap, Deployment, Service NodePort e HPA do Gateway;
+- `kustomization.yaml`, que reúne todos os recursos.
+
+O PostgreSQL utiliza um StatefulSet com uma réplica porque precisa de identidade e armazenamento estáveis. O PVC solicita `1Gi`; a StorageClass padrão do cluster deve permitir provisionamento dinâmico. Todos os componentes pertencem ao namespace `loja-veloz`.
+
+### Requisitos
+
+- Kubernetes 1.25 ou superior;
+- `kubectl` configurado para o cluster desejado;
+- uma StorageClass padrão para o PVC;
+- Metrics Server para que os HPAs obtenham métricas de CPU;
+- imagens da aplicação disponíveis no cluster.
+
+As imagens referenciadas são `loja-veloz/gateway:1.0.0`, `loja-veloz/pedidos:1.0.0`, `loja-veloz/pagamentos:1.0.0` e `loja-veloz/estoque:1.0.0`. Elas não usam `latest`. Na etapa futura de CI/CD, deverão ser publicadas em um registry e os nomes poderão ser ajustados para o endereço desse registry.
+
+O Secret versionado contém somente credenciais explícitas de demonstração. Em produção, não armazene credenciais no Git: utilize um gerenciador externo de secrets e faça a rotação dos valores.
+
+### Carregar imagens em um cluster local
+
+No Minikube, é possível construir diretamente no armazenamento de imagens do cluster:
+
+```bash
+minikube image build -t loja-veloz/gateway:1.0.0 services/gateway
+minikube image build -t loja-veloz/pedidos:1.0.0 services/pedidos
+minikube image build -t loja-veloz/pagamentos:1.0.0 services/pagamentos
+minikube image build -t loja-veloz/estoque:1.0.0 services/estoque
+```
+
+Em outros ambientes locais, construa as mesmas tags e carregue-as conforme o mecanismo oferecido pelo cluster. O `imagePullPolicy: IfNotPresent` permite usar essas imagens locais.
+
+### Aplicar e verificar
+
+Antes de aplicar, valide os manifests localmente:
+
+```bash
+kubectl apply --dry-run=client -k kubernetes
+```
+
+Crie ou atualize os recursos:
+
+```bash
+kubectl apply -k kubernetes
+kubectl get pods,services,pvc -n loja-veloz
+kubectl rollout status statefulset/postgres -n loja-veloz
+kubectl rollout status deployment/pedidos -n loja-veloz
+kubectl rollout status deployment/gateway -n loja-veloz
+```
+
+Para acompanhar logs:
+
+```bash
+kubectl logs -n loja-veloz deployment/gateway --tail=100 -f
+kubectl logs -n loja-veloz deployment/pedidos --tail=100 -f
+kubectl logs -n loja-veloz statefulset/postgres --tail=100 -f
+```
+
+Para verificar os autoscalers:
+
+```bash
+kubectl get hpa -n loja-veloz
+kubectl describe hpa gateway -n loja-veloz
+kubectl describe hpa pedidos -n loja-veloz
+```
+
+### Acessar o Gateway localmente
+
+O Gateway utiliza um NodePort fixo em `30080`. No Minikube, obtenha a URL acessível com:
+
+```bash
+minikube service gateway -n loja-veloz --url
+```
+
+Alternativamente, faça um redirecionamento temporário para `localhost:3000`:
+
+```bash
+kubectl port-forward -n loja-veloz service/gateway 3000:3000
+```
+
+Em seguida, teste `http://localhost:3000/health`. Os outros serviços são internos e são acessados pelo Gateway por DNS Kubernetes, por exemplo `http://pedidos:3001`.
+
+### Remover os recursos
+
+```bash
+kubectl delete -k kubernetes
+```
+
+Esse comando também remove o PVC e os dados persistidos do PostgreSQL. Faça backup antes caso precise conservar os pedidos.

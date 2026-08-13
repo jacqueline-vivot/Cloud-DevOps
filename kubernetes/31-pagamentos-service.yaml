@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pagamentos
+  namespace: loja-veloz
+  labels:
+    app.kubernetes.io/name: pagamentos
+    app.kubernetes.io/part-of: loja-veloz
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pagamentos
+  ports:
+    - name: http
+      port: 3002
+      targetPort: http
+      protocol: TCP
+

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: loja-veloz
+data:
+  PORT: "3000"
+  HOST: 0.0.0.0
+  PEDIDOS_URL: http://pedidos:3001
+  PAGAMENTOS_URL: http://pagamentos:3002
+  ESTOQUE_URL: http://estoque:3003
+
