@@ -189,3 +189,57 @@ kubectl delete -k kubernetes
 ```
 
 Esse comando também remove o PVC e os dados persistidos do PostgreSQL. Faça backup antes caso precise conservar os pedidos.
+
+## CI/CD
+
+O workflow principal está em `.github/workflows/ci-cd.yml` e é executado nos seguintes eventos:
+
+- push para `develop`;
+- push para `main`;
+- pull request direcionado para `main`.
+
+O pipeline possui três grupos de jobs:
+
+1. **Validação Node.js:** executa uma matriz para Gateway, Pedidos, Pagamentos e Estoque. Cada serviço usa Node.js 22, cache npm baseado no respectivo `package-lock.json`, instalação reproduzível com `npm ci`, validação de sintaxe, testes automatizados e auditoria das dependências de produção.
+2. **Validação Kubernetes:** instala uma versão fixa do `kubectl`, renderiza o `kustomization.yaml` e valida os recursos renderizados contra os schemas Kubernetes com Kubeconform. Essa etapa não acessa nem modifica um cluster.
+3. **Imagens de containers:** após as validações, usa Docker Buildx para processar os quatro Dockerfiles em paralelo. Pull requests executam um job de build sem publicação; pushes executam um job separado de build e publicação. O cache do GitHub Actions é separado por serviço.
+
+### Publicação no GHCR
+
+As imagens seguem o padrão:
+
+```text
+ghcr.io/<proprietario-do-repositorio>/loja-veloz-<servico>:<tag>
+```
+
+Exemplos:
+
+```text
+ghcr.io/exemplo/loja-veloz-gateway:sha-a1b2c3d
+ghcr.io/exemplo/loja-veloz-pedidos:develop
+ghcr.io/exemplo/loja-veloz-estoque:1.0.0
+```
+
+As tags geradas são:
+
+- `sha-<commit>` para rastreabilidade imutável em todos os eventos;
+- nome da branch nos pushes, como `develop` ou `main`;
+- `pr-<número>` durante a validação de pull requests;
+- `1.0.0` nos pushes para `main`, representando a versão estável acadêmica atual.
+
+Em pull requests, as imagens são construídas, mas `push` permanece desabilitado e não ocorre autenticação no registry. Em pushes para `develop` e `main`, o workflow autentica no `ghcr.io` usando somente o `GITHUB_TOKEN` temporário fornecido pelo GitHub Actions e publica as imagens. Nenhum token adicional fica armazenado no repositório.
+
+Os manifests Kubernetes base continuam usando os nomes locais `loja-veloz/<servico>:1.0.0` para facilitar demonstrações com Minikube. Antes de um deploy usando GHCR, a futura etapa de implantação deverá sobrescrever essas imagens com os nomes completos do registry, preferencialmente usando as tags imutáveis `sha-<commit>`. Caso os pacotes GHCR sejam privados, o cluster também precisará de um `imagePullSecret`.
+
+### Configuração no GitHub
+
+O workflow pode ser acompanhado na aba **Actions** do repositório, selecionando o workflow **CI/CD**.
+
+Normalmente, `GITHUB_TOKEN` e as permissões declaradas no próprio workflow são suficientes. Dependendo das políticas da organização ou do repositório, pode ser necessário:
+
+- permitir a execução de GitHub Actions em **Settings > Actions > General**;
+- permitir que workflows publiquem pacotes com `GITHUB_TOKEN`;
+- ajustar a visibilidade e as permissões de acesso dos pacotes no GHCR;
+- permitir as ações externas utilizadas pelo workflow, caso exista uma allowlist organizacional.
+
+Somente o job de publicação, restrito a eventos `push`, recebe `contents: read` e `packages: write`. Todos os jobs executados em pull requests recebem somente `contents: read`. Não existe deploy automático nesta etapa.

@@ -1,0 +1,167 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  node-validation:
+    name: Node.js - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - gateway
+          - pedidos
+          - pagamentos
+          - estoque
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Instalar dependências
+        working-directory: services/${{ matrix.service }}
+        run: npm ci
+
+      - name: Validar sintaxe
+        working-directory: services/${{ matrix.service }}
+        run: npm run check
+
+      - name: Executar testes
+        working-directory: services/${{ matrix.service }}
+        run: npm test
+
+      - name: Auditar dependências de produção
+        working-directory: services/${{ matrix.service }}
+        run: npm audit --omit=dev --audit-level=high
+
+  kubernetes-validation:
+    name: Kubernetes - manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Renderizar Kustomization
+        run: kubectl kustomize kubernetes > kubernetes-rendered.yaml
+
+      - name: Validar schemas Kubernetes
+        uses: docker://ghcr.io/yannh/kubeconform:v0.7.0
+        with:
+          args: -strict -summary /github/workspace/kubernetes-rendered.yaml
+
+  container-build:
+    name: Container (PR) - ${{ matrix.service }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs:
+      - node-validation
+      - kubernetes-validation
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - gateway
+          - pedidos
+          - pagamentos
+          - estoque
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Gerar metadados da imagem
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/loja-veloz-${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=pr
+
+      - name: Build sem publicação
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          file: services/${{ matrix.service }}/Dockerfile
+          push: false
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  container-publish:
+    name: Publicar - ${{ matrix.service }}
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs:
+      - node-validation
+      - kubernetes-validation
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - gateway
+          - pedidos
+          - pagamentos
+          - estoque
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Gerar metadados da imagem
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/loja-veloz-${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=1.0.0,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Autenticar no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e publicação
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
